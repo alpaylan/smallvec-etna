@@ -1,0 +1,62 @@
+# ETNA workload index for smallvec.
+#
+# One [[variant]] per injected mutation. Source of truth for variant->property
+# mapping. Every other fact is derivable from the source tree:
+#   - marauders list --path .              (marauders variants)
+#   - ls patches/*.patch                   (patch-based variants)
+#   - grep -rn "pub fn property_" src/     (property functions)
+#   - grep -rn "fn witness_.*_case_" tests/ src/  (witness tests)
+
+name = "smallvec"
+language = "Rust"
+
+[workload]
+name = "smallvec"
+crate = "smallvec"
+language = "rust"
+description = """
+ETNA workload for the Rust `smallvec` crate. Each variant re-introduces one
+historical bug-fix into a fresh patched branch and pairs it with a
+framework-neutral property, four PBT adapters, and a deterministic witness
+test.
+"""
+
+[runner]
+bin = "etna"
+cargo_features = ["etna"]
+properties = [
+    "LeakInlinePanics",
+    "AppendPreservesLength",
+    "FromVecZeroCapacity",
+]
+tools = ["etna", "proptest", "quickcheck", "crabcheck", "hegel"]
+
+[[variant]]
+name = "leak_inline_panic_3395246_1"
+property = "leak_inline_panics"
+injection = "patch"
+patch = "patches/leak_inline_panic_3395246_1.patch"
+source_commit = "339524684344f74ea7e5e05b3b5ae4e5043999f8"
+witnesses = ["witness_leak_inline_panics_case_inline_single_byte"]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/lib.rs"]
+
+[[variant]]
+name = "append_set_len_1bd2dbc_1"
+property = "append_preserves_length"
+injection = "patch"
+patch = "patches/append_set_len_1bd2dbc_1.patch"
+source_commit = "1bd2dbce81d9b58214bbbf5de30323017705d5a8"
+witnesses = ["witness_append_preserves_length_case_small_spilled"]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/lib.rs"]
+
+[[variant]]
+name = "from_vec_zero_capacity_944f603_1"
+property = "from_vec_zero_capacity"
+injection = "patch"
+patch = "patches/from_vec_zero_capacity_944f603_1.patch"
+source_commit = "944f60397a35043ef5704e9bf76b26cdcb5fc55d"
+witnesses = ["witness_from_vec_zero_capacity_case_empty_capacity_push_round_trip"]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/lib.rs"]

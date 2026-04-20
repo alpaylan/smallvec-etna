@@ -1,0 +1,21 @@
+Historical fix: 944f603 — "Correctly handle `Vec` with zero capacity in `from_vec` (#332)"
+
+Applying this patch installs the *buggy* pre-fix code: `SmallVec::from_vec`
+forwards through to the heap-tagged constructor even when the source `Vec`
+has zero capacity. The resulting SmallVec is tagged as "spilled" with a
+dangling heap pointer, which subsequently UBs on `shrink_to_fit`.
+
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -948,10 +948,6 @@ impl<T, const N: usize> SmallVec<T, N> {
+
+     #[inline]
+     pub fn from_vec(vec: Vec<T>) -> Self {
+-        if vec.capacity() == 0 {
+-            return Self::new();
+-        }
+-
+         if Self::IS_ZST {
+             // "Move" elements to stack buffer. They're ZST so we don't actually have to do
+             // anything. Just make sure they're not dropped.

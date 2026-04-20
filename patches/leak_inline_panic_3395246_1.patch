@@ -1,0 +1,19 @@
+Historical fix: 3395246 — "Fix: SmallVec::leak() to panic on inline storage (GHSA-5h7v-3586-wm8c)"
+
+Applying this patch installs the *buggy* pre-fix code: `SmallVec::leak`
+unconditionally fabricates a `&'a mut [T]` from inline storage, producing a
+dangling reference into the consumed stack frame.
+
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1696,9 +1696,6 @@ impl<T, const N: usize> SmallVec<T, N> {
+     }
+
+     pub fn leak<'a>(self) -> &'a mut [T] {
+-        if !self.spilled() {
+-            panic!("SmallVec::leak() called on inline (stack) SmallVec, which cannot be safely leaked");
+-        }
+         let mut me = ManuallyDrop::new(self);
+         unsafe { core::slice::from_raw_parts_mut(me.as_mut_ptr(), me.len()) }
+     }

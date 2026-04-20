@@ -72,6 +72,9 @@ extern crate std;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "etna")]
+pub mod etna;
+
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;

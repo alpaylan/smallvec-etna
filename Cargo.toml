@@ -19,11 +19,28 @@ specialization = []
 may_dangle = []
 extract_if = []
 serde = ["dep:serde_core"]
+etna = [
+    "std",
+    "dep:proptest",
+    "dep:quickcheck_etna",
+    "dep:crabcheck",
+    "dep:hegeltest",
+    "dep:rand_etna",
+]
 
 [dependencies]
 bytes = { version = "1", optional = true, default-features = false }
 serde_core = { version = "1.0.221", optional = true, default-features = false }
 malloc_size_of = { version = "0.1.1", optional = true, default-features = false }
+
+# ETNA framework deps — only needed by the `etna` bin target. Kept as regular
+# (non-optional) deps so that `cargo build --bin etna` works without enabling
+# the "etna" feature, but the bin itself is gated with `required-features`.
+proptest = { version = "1.11.0", optional = true }
+quickcheck_etna = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck", package = "quickcheck", features = ["etna"], optional = true }
+crabcheck = { path = "/Users/akeles/Programming/projects/PbtBenchmark/crabcheck", optional = true }
+hegeltest = { version = "0.3.7", optional = true }
+rand_etna = { package = "rand", version = "0.9", optional = true }
 
 [dev-dependencies]
 bincode = "1.0.1"
@@ -31,3 +48,8 @@ bincode = "1.0.1"
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[bin]]
+name = "etna"
+path = "src/bin/etna.rs"
+required-features = ["etna"]

@@ -1,0 +1,17 @@
+Historical fix: 1bd2dbc — "bugfix for append not set self.len properly (#347)"
+
+Applying this patch installs the *buggy* pre-fix code: `SmallVec::append`
+copies the source buffer into the destination but never updates
+`self.len()` to the combined total, leaving `len == old_self_len`.
+
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1275,7 +1275,6 @@ impl<T, const N: usize> SmallVec<T, N> {
+         // SAFETY: we have a mutable reference to each vector and each uniquely owns its memory.
+         // so the ranges can't overlap
+         unsafe { copy_nonoverlapping(other.as_ptr(), ptr, other_len) };
+-        unsafe { self.set_len(total_len) }
+     }
+
+     #[inline]
