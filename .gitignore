@@ -4,3 +4,6 @@ Cargo.lock
 /.vscode
 progress.jsonl
 .hegel/
+.marauders/
+.migration-cache/
+etna.log
