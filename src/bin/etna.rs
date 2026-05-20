@@ -116,12 +116,13 @@ impl fmt::Display for AppendInput {
 
 #[derive(Clone)]
 struct FromVecZeroInput {
-    push_after: Vec<u16>,
+    data: Vec<u16>,
+    reserve: u8,
 }
 
 impl fmt::Debug for FromVecZeroInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "push_after={:?}", self.push_after)
+        write!(f, "data={:?} reserve={}", self.data, self.reserve)
     }
 }
 
@@ -151,8 +152,11 @@ fn canonical_append() -> AppendInput {
 }
 
 fn canonical_from_vec_zero() -> FromVecZeroInput {
+    // The bug only manifests when the source Vec has capacity 0; that
+    // means an empty data slice and no reserve hint.
     FromVecZeroInput {
-        push_after: vec![7, 8, 9],
+        data: vec![],
+        reserve: 0,
     }
 }
 
@@ -168,7 +172,7 @@ fn check_append_preserves_length() -> Result<(), String> {
 
 fn check_from_vec_zero_capacity() -> Result<(), String> {
     let v = canonical_from_vec_zero();
-    to_err(property_from_vec_zero_capacity(v.push_after))
+    to_err(property_from_vec_zero_capacity(v.data, v.reserve))
 }
 
 fn run_etna_property(property: &str) -> Outcome {
@@ -213,7 +217,10 @@ fn qc_gen_small_vec_i64(g: &mut Gen) -> Vec<i64> {
 }
 
 fn qc_gen_small_vec_u16(g: &mut Gen) -> Vec<u16> {
-    let n: usize = <usize as QcArbitrary>::arbitrary(g) % 16;
+    // Bias towards short / empty Vecs so the from_vec_zero_capacity bug
+    // (capacity-0 source) shows up reasonably often. Length is in 0..8 so
+    // the empty case appears ~12.5% of the time.
+    let n: usize = <usize as QcArbitrary>::arbitrary(g) % 8;
     (0..n).map(|_| <u16 as QcArbitrary>::arbitrary(g)).collect()
 }
 
@@ -238,7 +245,11 @@ impl QcArbitrary for AppendInput {
 impl QcArbitrary for FromVecZeroInput {
     fn arbitrary(g: &mut Gen) -> Self {
         FromVecZeroInput {
-            push_after: qc_gen_small_vec_u16(g),
+            data: qc_gen_small_vec_u16(g),
+            // Small reserve range (0..4) so reserve == 0 is hit ~25% of
+            // the time; combined with empty `data`, the capacity-0 bug
+            // path triggers on ~3% of inputs.
+            reserve: <u8 as QcArbitrary>::arbitrary(g) % 4,
         }
     }
 }
@@ -258,7 +269,10 @@ fn cc_gen_small_vec_i64<R: Rng>(rng: &mut R) -> Vec<i64> {
 }
 
 fn cc_gen_small_vec_u16<R: Rng>(rng: &mut R) -> Vec<u16> {
-    let n: usize = (rng.random::<u32>() as usize) % 16;
+    // Short Vec range (0..8) so empty Vecs (and therefore capacity-0
+    // source Vecs in the from_vec_zero_capacity property) are sampled
+    // often enough to trigger the bug in tens of cases.
+    let n: usize = (rng.random::<u32>() as usize) % 8;
     (0..n).map(|_| rng.random::<u16>()).collect()
 }
 
@@ -283,7 +297,8 @@ impl<R: Rng> CcArbitrary<R> for AppendInput {
 impl<R: Rng> CcArbitrary<R> for FromVecZeroInput {
     fn generate(rng: &mut R, _n: usize) -> Self {
         FromVecZeroInput {
-            push_after: cc_gen_small_vec_u16(rng),
+            data: cc_gen_small_vec_u16(rng),
+            reserve: (rng.random::<u8>()) % 4,
         }
     }
 }
@@ -308,8 +323,14 @@ fn append_strategy() -> BoxedStrategy<AppendInput> {
 }
 
 fn from_vec_zero_strategy() -> BoxedStrategy<FromVecZeroInput> {
-    proptest::collection::vec(any::<u16>(), 0..16usize)
-        .prop_map(|push_after| FromVecZeroInput { push_after })
+    // Short data Vec (len 0..8) plus a small reserve hint (0..4) so the
+    // capacity-0 trigger (data empty AND reserve == 0) fires often
+    // enough to find the bug.
+    (
+        proptest::collection::vec(any::<u16>(), 0..8usize),
+        0u8..4u8,
+    )
+        .prop_map(|(data, reserve)| FromVecZeroInput { data, reserve })
         .boxed()
 }
 
@@ -369,7 +390,7 @@ fn run_proptest_property(property: &str) -> Outcome {
                 c.fetch_add(1, Ordering::Relaxed);
                 let cex = format!("({:?})", v);
                 let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    property_from_vec_zero_capacity(v.push_after.clone())
+                    property_from_vec_zero_capacity(v.data.clone(), v.reserve)
                 }));
                 match out {
                     Ok(PropertyResult::Pass) | Ok(PropertyResult::Discard) => Ok(()),
@@ -425,7 +446,7 @@ fn qc_append_preserves_length(v: AppendInput) -> TestResult {
 fn qc_from_vec_zero_capacity(v: FromVecZeroInput) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
     let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        property_from_vec_zero_capacity(v.push_after)
+        property_from_vec_zero_capacity(v.data, v.reserve)
     }));
     match out {
         Ok(PropertyResult::Pass) => TestResult::passed(),
@@ -501,7 +522,7 @@ fn cc_append_preserves_length(v: AppendInput) -> Option<bool> {
 
 fn cc_from_vec_zero_capacity(v: FromVecZeroInput) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_from_vec_zero_capacity(v.push_after) {
+    match property_from_vec_zero_capacity(v.data, v.reserve) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
@@ -590,7 +611,8 @@ fn hg_draw_vec_i64(tc: &TestCase) -> Vec<i64> {
 }
 
 fn hg_draw_vec_u16(tc: &TestCase) -> Vec<u16> {
-    let n = tc.draw(hgen::integers::<u32>().min_value(0).max_value(16)) as usize;
+    // Short Vec range so empty Vecs (capacity-0 path) appear often.
+    let n = tc.draw(hgen::integers::<u32>().min_value(0).max_value(8)) as usize;
     (0..n).map(|_| hg_draw_u16(tc)).collect()
 }
 
@@ -639,10 +661,12 @@ fn run_hegel_property(property: &str) -> Outcome {
         "FromVecZeroCapacity" => {
             Hegel::new(|tc: TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let push_after = hg_draw_vec_u16(&tc);
-                let cex = format!("(push_after={:?})", push_after);
+                let data = hg_draw_vec_u16(&tc);
+                let reserve =
+                    tc.draw(hgen::integers::<u32>().min_value(0).max_value(3)) as u8;
+                let cex = format!("(data={:?} reserve={})", data, reserve);
                 let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    property_from_vec_zero_capacity(push_after.clone())
+                    property_from_vec_zero_capacity(data.clone(), reserve)
                 }));
                 match out {
                     Ok(PropertyResult::Pass) | Ok(PropertyResult::Discard) => {}

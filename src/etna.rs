@@ -172,61 +172,89 @@ pub fn property_append_preserves_length(a: Vec<i64>, b: Vec<i64>) -> PropertyRes
 /// the resulting SmallVec must still behave correctly under subsequent
 /// operations such as `shrink_to_fit`, `push`, and `iter`.
 ///
+/// The generator passes in a source `Vec<u16>` plus a small reserve hint;
+/// the property derives a `Vec<u16>` whose capacity is either zero
+/// (when both the data is empty and the reserve hint is zero) or matches
+/// the data length. Random Vec lengths combined with a non-trivial
+/// probability of hitting the capacity-0 case widen the test space versus a
+/// hardcoded `Vec::with_capacity(0)`.
+///
 /// Bug this catches:
 /// - `from_vec_zero_capacity_944f603_1`: the pre-fix `from_vec` wrapped the
 ///   dangling pointer of a zero-capacity `Vec` into `RawSmallVec::new_heap`
 ///   and tagged the SmallVec as "spilled". Later calls to `shrink_to_fit`,
 ///   `deallocate`, or `push` then dereferenced or freed the dangling pointer.
 ///   The mutation removes the early `if vec.capacity() == 0 { return ... }`
-///   guard. The property triggers by building from an empty-capacity `Vec`
-///   and then pushing / shrinking; a crash or observable corruption under
-///   `shrink_to_fit` + iteration fails the property.
-pub fn property_from_vec_zero_capacity(push_after: Vec<u16>) -> PropertyResult {
-    let src: Vec<u16> = Vec::with_capacity(0);
+///   guard. The property triggers when the source `Vec` happens to have
+///   capacity 0 (typically when `data.is_empty()` and no reserve was
+///   requested); the buggy `from_vec` tags the result as spilled and the
+///   property fails on the `spilled()` check.
+pub fn property_from_vec_zero_capacity(data: Vec<u16>, reserve: u8) -> PropertyResult {
+    // Build a source Vec whose capacity is sometimes 0 (the bug trigger)
+    // and sometimes non-zero. The historical fix keys on
+    // `vec.capacity() == 0`, so the only inputs that meaningfully exercise
+    // the code path are those with capacity 0 — but a *correct* `from_vec`
+    // must also handle non-zero-capacity inputs without regressing, so we
+    // run the same property on both kinds.
+    let src: Vec<u16> = if data.is_empty() && reserve == 0 {
+        // Capacity-0 path: this is exactly the input that triggers the bug.
+        Vec::new()
+    } else if data.is_empty() {
+        // Empty Vec but with reserved capacity — exercises the non-bug
+        // path while still feeding from_vec a length-0 Vec.
+        Vec::with_capacity(reserve as usize)
+    } else {
+        // Non-empty: capacity ends up at least `data.len()`.
+        data.clone()
+    };
+    let src_cap = src.capacity();
+    let src_len = src.len();
     let mut sv: SmallVec<u16, 2> = SmallVec::from_vec(src);
 
-    // After construction from an empty zero-capacity Vec, the SmallVec must
-    // be inline (non-spilled): the bug that the fix guards against is the
-    // "tagged spilled with a dangling pointer" state.
-    if sv.spilled() {
-        return PropertyResult::Fail(format!(
-            "SmallVec::from_vec(Vec::with_capacity(0)) was spilled (len={}, cap={})",
-            sv.len(),
-            sv.capacity()
-        ));
+    // The bug only manifests when the source had capacity 0: the buggy
+    // `from_vec` wraps a dangling pointer and tags the SmallVec as
+    // spilled. For non-zero-capacity sources, smallvec v2 always heap-tags
+    // the result and that is *correct*, so we don't make a spilled
+    // assertion in that case.
+    if src_cap == 0 {
+        if sv.spilled() {
+            return PropertyResult::Fail(format!(
+                "SmallVec::from_vec(Vec[len={src_len}, cap=0]) was spilled (sv.len={}, sv.cap={})",
+                sv.len(),
+                sv.capacity()
+            ));
+        }
     }
-    if sv.len() != 0 {
+    if sv.len() != src_len {
         return PropertyResult::Fail(format!(
-            "SmallVec::from_vec(Vec::with_capacity(0)).len()={}",
-            sv.len()
+            "SmallVec::from_vec produced wrong length: got {}, expected {}",
+            sv.len(),
+            src_len
         ));
     }
 
     // Exercise shrink_to_fit — the historical bug crashed here because the
     // allocator saw a dangling pointer with a non-zero capacity tag.
     sv.shrink_to_fit();
-    if sv.spilled() {
+    if src_cap == 0 && sv.spilled() {
         return PropertyResult::Fail(String::from(
-            "shrink_to_fit left an empty SmallVec spilled",
+            "shrink_to_fit on a from-zero-cap SmallVec left it spilled",
         ));
     }
 
-    // Push the full input and confirm round-trip.
-    for &x in &push_after {
-        sv.push(x);
-    }
-    if sv.len() != push_after.len() {
-        return PropertyResult::Fail(format!(
-            "after pushes: len={}, expected {}",
-            sv.len(),
-            push_after.len()
-        ));
-    }
+    // Round-trip iteration must yield the original data, regardless of the
+    // source capacity.
     let collected: Vec<u16> = sv.iter().copied().collect();
-    if collected != push_after {
+    if collected != data && !data.is_empty() {
         return PropertyResult::Fail(format!(
             "content mismatch: got {:?}, expected {:?}",
-            collected, push_after
+            collected, data
+        ));
+    }
+    if data.is_empty() && !collected.is_empty() {
+        return PropertyResult::Fail(format!(
+            "expected empty SmallVec, got {:?}",
+            collected
         ));
     }
     PropertyResult::Pass

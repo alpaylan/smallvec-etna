@@ -43,6 +43,7 @@ hegeltest = { version = "0.3.7", optional = true }
 rand_etna = { package = "rand", version = "0.9", optional = true }
 
 [dev-dependencies]
+serde_json = "1"
 bincode = "1.0.1"
 
 [package.metadata.docs.rs]
@@ -52,4 +53,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 [[bin]]
 name = "etna"
 path = "src/bin/etna.rs"
+required-features = ["etna"]
+
+[[bin]]
+name = "etna-faultloc"
+path = "src/bin/etna-faultloc.rs"
 required-features = ["etna"]

@@ -36,11 +36,12 @@ fn witness_append_preserves_length_case_small_spilled() {
     assert_pass(property_append_preserves_length(vec![1, 2, 3], vec![4, 5]));
 }
 
-/// Triggers `from_vec_zero_capacity_944f603_1`. Starting from a
-/// `Vec::with_capacity(0)`, the buggy `from_vec` constructs a SmallVec
-/// tagged as "spilled" with a dangling heap pointer. The property observes
-/// the bogus `spilled()` flag directly.
+/// Triggers `from_vec_zero_capacity_944f603_1`. With `data` empty and
+/// `reserve = 0`, the property feeds `from_vec` a `Vec::new()` (capacity
+/// 0). The buggy `from_vec` constructs a SmallVec tagged as "spilled"
+/// with a dangling heap pointer; the property observes the bogus
+/// `spilled()` flag directly.
 #[test]
 fn witness_from_vec_zero_capacity_case_empty_capacity_push_round_trip() {
-    assert_pass(property_from_vec_zero_capacity(vec![7, 8, 9]));
+    assert_pass(property_from_vec_zero_capacity(vec![], 0));
 }
